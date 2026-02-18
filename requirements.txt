@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+langgraph
+openai
+faiss-cpu
+pydantic
+python-dotenv
+requests
+langchain
+langchain-community
+unstructured
+streamlit
+markdown
+weasyprint
+streamlit-webrtc
