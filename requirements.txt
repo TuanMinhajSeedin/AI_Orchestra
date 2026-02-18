@@ -13,3 +13,5 @@ streamlit
 markdown
 weasyprint
 streamlit-webrtc
+python-docx
+

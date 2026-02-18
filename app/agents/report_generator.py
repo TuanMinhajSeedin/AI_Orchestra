@@ -5,6 +5,7 @@ from pathlib import Path
 
 from app.state import ResearchState
 from app.llm import LLM
+from app.tools.pdf_exporter import export_report_to_docx
 
 
 logger = logging.getLogger(__name__)
@@ -166,6 +167,18 @@ information provided above."""
         except Exception as exc:
             # Don't fail the pipeline if saving markdown fails
             logger.warning("ReportGeneratorAgent: Failed to save markdown report: %s", exc)
+
+        # Also export to DOCX format
+        try:
+            docx_path = export_report_to_docx(
+                markdown_content=state.final_report,
+                user_query=state.user_query,
+                output_dir="output"
+            )
+            logger.info("ReportGeneratorAgent: DOCX report saved to: %s", docx_path)
+        except Exception as exc:
+            # Don't fail the pipeline if saving DOCX fails
+            logger.warning("ReportGeneratorAgent: Failed to save DOCX report: %s", exc)
 
         return state
 

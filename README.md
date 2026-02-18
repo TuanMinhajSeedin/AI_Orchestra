@@ -91,7 +91,7 @@ flowchart LR
     CHECK2 -->|No| ERROR([Error State])
     CHECK2 -->|Yes| SUMMARIZE[Summarizer Agent]
     SUMMARIZE --> REPORT[Report Generator]
-    REPORT --> SAVE[Save Markdown]
+    REPORT --> SAVE[Save Document]
     SAVE --> END([Complete])
     
     style START fill:#FF6B6B,stroke:#C92A2A,color:#fff
@@ -268,9 +268,6 @@ All operations are logged to:
 
 Log format: `[YYYY-MM-DD HH:MM:SS]: message`
 
-## 🧪 Testing
-
-Test scripts are available in the `trail/` directory:
 
 ```bash
 # Test web search functionality

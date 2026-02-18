@@ -1,51 +1,46 @@
 """
-PDF Export Tool for Research Reports.
+DOCX Export Tool for Research Reports.
 
-Converts markdown reports to PDF and saves them to the output directory.
+Converts markdown reports to DOCX format and saves them to the output directory.
 """
 
-import os
 import re
 import logging
 from pathlib import Path
 from typing import Optional
 
 try:
-    import markdown
-    from weasyprint import HTML, CSS
-    from weasyprint.text.fonts import FontConfiguration
-except Exception:
-    # Catch any error from WeasyPrint import (ImportError, OSError from missing native libs, etc.)
-    markdown = None
-    HTML = None
-    CSS = None
-    FontConfiguration = None
-
+    from docx import Document
+    from docx.shared import Inches, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+except ImportError:
+    Document = None
 
 logger = logging.getLogger(__name__)
 
 
-class PDFExporter:
+class DOCXExporter:
     """
-    Tool for exporting markdown reports to PDF format.
+    Tool for exporting markdown reports to DOCX format.
     
-    Uses markdown + weasyprint to convert markdown to PDF.
+    Uses python-docx to convert markdown to DOCX.
     """
 
     def __init__(self, output_dir: str = "output") -> None:
         """
-        Initialize the PDF exporter.
+        Initialize the DOCX exporter.
         
         Args:
-            output_dir: Directory where PDF files will be saved
+            output_dir: Directory where DOCX files will be saved
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
-        if markdown is None or HTML is None:
+        if Document is None:
             logger.warning(
-                "PDFExporter: markdown or weasyprint not installed. "
-                "Install with: pip install markdown weasyprint"
+                "DOCXExporter: python-docx not installed. "
+                "Install with: pip install python-docx"
             )
 
     def sanitize_filename(self, filename: str) -> str:
@@ -66,129 +61,150 @@ class PDFExporter:
             filename = "research_report"
         return filename
 
-    def markdown_to_html(self, markdown_content: str) -> str:
+    def _add_formatted_text(self, paragraph, text: str):
         """
-        Convert markdown content to HTML.
+        Add text to a paragraph, handling markdown formatting (bold, italic, links).
         
         Args:
-            markdown_content: Markdown formatted text
-            
-        Returns:
-            HTML string
+            paragraph: docx paragraph object
+            text: Text with markdown formatting
         """
-        if markdown is None:
-            raise ImportError("markdown library is not installed. Install with: pip install markdown")
+        # Pattern to match markdown formatting: **bold**, *italic*, [link](url)
+        parts = re.split(r'(\*\*.*?\*\*|\*.*?\*|\[.*?\]\(.*?\))', text)
         
-        # Convert markdown to HTML
-        html_content = markdown.markdown(
-            markdown_content,
-            extensions=['extra', 'codehilite', 'tables']
-        )
-        
-        # Wrap in a styled HTML document
-        html_document = f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <style>
-        body {{
-            font-family: 'Georgia', 'Times New Roman', serif;
-            line-height: 1.6;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            color: #333;
-        }}
-        h1 {{
-            color: #2c3e50;
-            border-bottom: 3px solid #3498db;
-            padding-bottom: 10px;
-        }}
-        h2 {{
-            color: #34495e;
-            margin-top: 30px;
-            border-bottom: 2px solid #ecf0f1;
-            padding-bottom: 5px;
-        }}
-        h3 {{
-            color: #555;
-            margin-top: 20px;
-        }}
-        code {{
-            background-color: #f4f4f4;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-family: 'Courier New', monospace;
-        }}
-        pre {{
-            background-color: #f4f4f4;
-            padding: 15px;
-            border-radius: 5px;
-            overflow-x: auto;
-        }}
-        a {{
-            color: #3498db;
-            text-decoration: none;
-        }}
-        a:hover {{
-            text-decoration: underline;
-        }}
-        ul, ol {{
-            margin-left: 20px;
-        }}
-        blockquote {{
-            border-left: 4px solid #3498db;
-            margin-left: 0;
-            padding-left: 20px;
-            color: #666;
-        }}
-        table {{
-            border-collapse: collapse;
-            width: 100%;
-            margin: 20px 0;
-        }}
-        th, td {{
-            border: 1px solid #ddd;
-            padding: 12px;
-            text-align: left;
-        }}
-        th {{
-            background-color: #3498db;
-            color: white;
-        }}
-    </style>
-</head>
-<body>
-{html_content}
-</body>
-</html>"""
-        
-        return html_document
+        for part in parts:
+            if not part:
+                continue
+            
+            # Bold text: **text**
+            if part.startswith('**') and part.endswith('**'):
+                run = paragraph.add_run(part[2:-2])
+                run.bold = True
+            # Italic text: *text*
+            elif part.startswith('*') and part.endswith('*') and not part.startswith('**'):
+                run = paragraph.add_run(part[1:-1])
+                run.italic = True
+            # Link: [text](url)
+            elif part.startswith('[') and '](' in part:
+                match = re.match(r'\[(.*?)\]\((.*?)\)', part)
+                if match:
+                    link_text = match.group(1)
+                    link_url = match.group(2)
+                    run = paragraph.add_run(link_text)
+                    run.font.color.rgb = RGBColor(0, 102, 204)  # Blue color
+                    run.underline = True
+                    # Add hyperlink (requires additional processing)
+                    # For now, just add the text with URL in parentheses
+                    paragraph.add_run(f' ({link_url})')
+            else:
+                paragraph.add_run(part)
 
-    def export_to_pdf(
+    def _parse_markdown_to_docx(self, doc: Document, markdown_content: str):
+        """
+        Parse markdown content and add it to the DOCX document.
+        
+        Args:
+            doc: docx Document object
+            markdown_content: Markdown formatted text
+        """
+        lines = markdown_content.split('\n')
+        i = 0
+        
+        while i < len(lines):
+            line = lines[i].rstrip()
+            
+            # Empty line
+            if not line:
+                doc.add_paragraph()
+                i += 1
+                continue
+            
+            # Header level 1: # Header
+            if line.startswith('# '):
+                heading = doc.add_heading(line[2:], level=1)
+                heading.style.font.size = Pt(18)
+                i += 1
+                continue
+            
+            # Header level 2: ## Header
+            if line.startswith('## '):
+                heading = doc.add_heading(line[3:], level=2)
+                heading.style.font.size = Pt(16)
+                i += 1
+                continue
+            
+            # Header level 3: ### Header
+            if line.startswith('### '):
+                heading = doc.add_heading(line[4:], level=3)
+                heading.style.font.size = Pt(14)
+                i += 1
+                continue
+            
+            # Unordered list: - item or * item
+            if line.startswith('- ') or line.startswith('* '):
+                item_text = line[2:].strip()
+                para = doc.add_paragraph(style='List Bullet')
+                self._add_formatted_text(para, item_text)
+                i += 1
+                continue
+            
+            # Ordered list: 1. item
+            if re.match(r'^\d+\.\s+', line):
+                item_text = re.sub(r'^\d+\.\s+', '', line)
+                para = doc.add_paragraph(style='List Number')
+                self._add_formatted_text(para, item_text)
+                i += 1
+                continue
+            
+            # Code block: ```code```
+            if line.startswith('```'):
+                # Collect code block
+                code_lines = []
+                i += 1
+                while i < len(lines) and not lines[i].strip().startswith('```'):
+                    code_lines.append(lines[i])
+                    i += 1
+                if i < len(lines):
+                    i += 1  # Skip closing ```
+                
+                # Add code block as a paragraph with monospace font
+                code_text = '\n'.join(code_lines)
+                para = doc.add_paragraph()
+                run = para.add_run(code_text)
+                run.font.name = 'Courier New'
+                run.font.size = Pt(10)
+                para.style = 'No Spacing'
+                continue
+            
+            # Regular paragraph
+            para = doc.add_paragraph()
+            self._add_formatted_text(para, line)
+            i += 1
+
+    def export_to_docx(
         self,
         markdown_content: str,
         user_query: str,
         filename: Optional[str] = None
     ) -> str:
         """
-        Export a markdown report to PDF.
+        Export a markdown report to DOCX.
         
         Args:
             markdown_content: Markdown formatted report
             user_query: Original user query (used for filename if filename not provided)
-            filename: Optional custom filename (without .pdf extension)
+            filename: Optional custom filename (without .docx extension)
             
         Returns:
-            Path to the saved PDF file
+            Path to the saved DOCX file
             
         Raises:
             ImportError: If required libraries are not installed
-            Exception: If PDF generation fails
+            Exception: If DOCX generation fails
         """
-        if HTML is None or CSS is None:
+        if Document is None:
             raise ImportError(
-                "weasyprint library is not installed. Install with: pip install weasyprint"
+                "python-docx library is not installed. Install with: pip install python-docx"
             )
         
         # Determine filename
@@ -197,49 +213,65 @@ class PDFExporter:
         else:
             filename = self.sanitize_filename(filename)
         
-        # Ensure .pdf extension
-        if not filename.endswith('.pdf'):
-            filename += '.pdf'
+        # Ensure .docx extension
+        if not filename.endswith('.docx'):
+            filename += '.docx'
         
-        pdf_path = self.output_dir / filename
+        docx_path = self.output_dir / filename
         
         try:
-            logger.info("PDFExporter: Converting markdown to HTML...")
-            html_content = self.markdown_to_html(markdown_content)
+            logger.info("DOCXExporter: Creating DOCX document...")
             
-            logger.info("PDFExporter: Generating PDF: %s", pdf_path)
-            font_config = FontConfiguration()
-            HTML(string=html_content).write_pdf(
-                pdf_path,
-                font_config=font_config
-            )
+            # Create new document
+            doc = Document()
             
-            logger.info("PDFExporter: Successfully saved PDF to: %s", pdf_path)
-            return str(pdf_path)
+            # Set document margins
+            sections = doc.sections
+            for section in sections:
+                section.top_margin = Inches(1)
+                section.bottom_margin = Inches(1)
+                section.left_margin = Inches(1)
+                section.right_margin = Inches(1)
+            
+            # Set default font
+            style = doc.styles['Normal']
+            font = style.font
+            font.name = 'Calibri'
+            font.size = Pt(11)
+            
+            # Parse and add markdown content
+            logger.info("DOCXExporter: Parsing markdown content...")
+            self._parse_markdown_to_docx(doc, markdown_content)
+            
+            # Save document
+            logger.info("DOCXExporter: Saving DOCX to: %s", docx_path)
+            doc.save(str(docx_path))
+            
+            logger.info("DOCXExporter: Successfully saved DOCX to: %s", docx_path)
+            return str(docx_path)
             
         except Exception as exc:
-            logger.error("PDFExporter: Failed to generate PDF: %s", exc)
+            logger.error("DOCXExporter: Failed to generate DOCX: %s", exc)
             raise
 
 
-def export_report_to_pdf(
+def export_report_to_docx(
     markdown_content: str,
     user_query: str,
     output_dir: str = "output",
     filename: Optional[str] = None
 ) -> str:
     """
-    Convenience function to export a markdown report to PDF.
+    Convenience function to export a markdown report to DOCX.
     
     Args:
         markdown_content: Markdown formatted report
         user_query: Original user query
-        output_dir: Directory where PDF will be saved
-        filename: Optional custom filename (without .pdf extension)
+        output_dir: Directory where DOCX will be saved
+        filename: Optional custom filename (without .docx extension)
         
     Returns:
-        Path to the saved PDF file
+        Path to the saved DOCX file
     """
-    exporter = PDFExporter(output_dir=output_dir)
-    return exporter.export_to_pdf(markdown_content, user_query, filename)
-
+    exporter = DOCXExporter(output_dir=output_dir)
+    return exporter.export_to_docx(markdown_content, user_query, filename)
