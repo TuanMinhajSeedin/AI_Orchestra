@@ -1,39 +1,63 @@
 """
 Streamlit UI for AI Research Orchestrator.
 
-Provides a conversational chat interface with a spinner while the
-LangGraph-based pipeline runs.
+Provides a conversational chat interface that calls the FastAPI /research endpoint.
 """
 
-import asyncio
-
+import os
+import requests
 import streamlit as st
 
-from app.orchestrator import Orchestrator
+
+# API endpoint URL (can be configured via environment variable)
+API_URL = os.getenv("API_URL", "http://localhost:8000")
 
 
-# Initialize orchestrator (cached across reruns)
-@st.cache_resource
-def get_orchestrator() -> Orchestrator:
-    return Orchestrator()
-
-
-def run_research_sync(query: str) -> str:
+def run_research_sync(query: str, api_url: str = None) -> str:
     """
-    Run the async orchestrator.run(query) from a synchronous context.
+    Call the FastAPI /research endpoint to run the research pipeline.
+    
+    Args:
+        query: Research query string
+        api_url: API endpoint URL (defaults to API_URL from environment)
+        
+    Returns:
+        Final report string, or error message if request fails
     """
-    orchestrator = get_orchestrator()
-
-    # Use a fresh event loop for each call to avoid conflicts
-    loop = asyncio.new_event_loop()
+    if api_url is None:
+        api_url = API_URL
+    
     try:
-        asyncio.set_event_loop(loop)
-        report = loop.run_until_complete(orchestrator.run(query=query))
-    finally:
-        loop.close()
-        asyncio.set_event_loop(None)
-
-    return report
+        response = requests.post(
+            f"{api_url}/research",
+            json={"query": query},
+            timeout=300,  # 5 minute timeout for long-running research
+        )
+        response.raise_for_status()
+        result = response.json()
+        return result.get("final_report", "No report generated.")
+    except requests.exceptions.ConnectionError:
+        return (
+            "❌ **Error: Could not connect to the API server.**\n\n"
+            "Please make sure the FastAPI server is running:\n"
+            "```bash\nuvicorn app.main:app --reload\n```"
+        )
+    except requests.exceptions.Timeout:
+        return (
+            "⏱️ **Error: Request timed out.**\n\n"
+            "The research pipeline is taking longer than expected. "
+            "Please try again or check the server logs."
+        )
+    except requests.exceptions.HTTPError as e:
+        error_detail = "Unknown error"
+        try:
+            error_data = e.response.json()
+            error_detail = error_data.get("detail", {}).get("message", str(e))
+        except Exception:
+            error_detail = str(e)
+        return f"❌ **Error: {error_detail}**"
+    except Exception as e:
+        return f"❌ **Unexpected error: {str(e)}**"
 
 
 def main() -> None:
@@ -48,6 +72,31 @@ def main() -> None:
         "Ask a research question and I'll plan, search, analyze, "
         "summarize, and generate a structured report for you."
     )
+    
+    # Initialize API URL in session state
+    if "api_url" not in st.session_state:
+        st.session_state.api_url = API_URL
+    
+    # Show API connection status in sidebar
+    with st.sidebar:
+        st.header("⚙️ Configuration")
+        api_url = st.text_input(
+            "API URL", 
+            value=st.session_state.api_url, 
+            help="FastAPI server endpoint"
+        )
+        st.session_state.api_url = api_url
+        
+        # Health check
+        try:
+            health_response = requests.get(f"{st.session_state.api_url}/health", timeout=2)
+            if health_response.status_code == 200:
+                st.success("✅ API Connected")
+            else:
+                st.warning("⚠️ API Status Unknown")
+        except Exception:
+            st.error("❌ API Not Reachable")
+            st.info(f"Make sure the server is running at:\n`{st.session_state.api_url}`")
 
     # Initialize chat history
     if "messages" not in st.session_state:
@@ -72,7 +121,9 @@ def main() -> None:
             with st.spinner(
                 "🚀 Running research pipeline: planner → search → analyzer → summarizer → report..."
             ):
-                report = run_research_sync(prompt)
+                # Use the API URL from session state if available
+                api_url = st.session_state.get("api_url", API_URL)
+                report = run_research_sync(prompt, api_url=api_url)
 
             # Show the final report
             st.markdown(report or "No report generated.")
